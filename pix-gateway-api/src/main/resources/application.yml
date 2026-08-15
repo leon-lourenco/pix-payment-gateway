@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: pix-gateway-api
+  datasource:
+    url: jdbc:postgresql://localhost:5432/pixgateway
+    username: pixgateway
+    password: pixgateway
+  jpa:
+    hibernate:
+      ddl-auto: validate # schema is owned by Flyway migrations, not Hibernate
+    open-in-view: false # forces lazy loading to happen inside the service layer, not the view
+
+pix:
+  outbox:
+    poll-interval-ms: 1000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
