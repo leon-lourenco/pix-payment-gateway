@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: pix-ledger-worker
+  datasource:
+    url: jdbc:postgresql://localhost:5433/pixledger
+    username: pixledger
+    password: pixledger
+  jpa:
+    hibernate:
+      ddl-auto: validate # schema is owned by Flyway migrations, not Hibernate
+    open-in-view: false # forces lazy loading to happen inside the service layer, not the view
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: pix-ledger-worker
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      # Unused by the service itself (it only consumes); kept so the auto-configured
+      # KafkaTemplate is usable as-is by tests that publish directly to the topic.
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+pix:
+  kafka:
+    topic:
+      transaction-created: transactions.created
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
