@@ -11,29 +11,30 @@ a senior backend engineer, built in public in scoped phases.
 ## Status
 
 - [x] **Phase 1 — `pix-gateway-api`**: idempotent transaction intake, outbox pattern, Postgres, Testcontainers.
-- [ ] **Phase 2 — `pix-ledger-worker`**: Redpanda (Kafka-API-compatible) consumer, double-entry ledger, full `docker-compose up`.
+- [x] **Phase 2 — `pix-ledger-worker`**: Redpanda (Kafka-API-compatible) consumer, double-entry ledger, full `docker-compose up`.
 - [ ] **Phase 3 — Observability**: OpenTelemetry/Prometheus/Grafana, a load test, and a fault-injection recording.
 
-Only Phase 1 is implemented so far. The sections below describe what exists today; the rest
-of this README will grow as each phase lands.
+Phases 1 and 2 are implemented and running end-to-end. The sections below describe what exists
+today; the rest of this README will grow as Phase 3 lands.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     Client(["Client"]) -->|"POST /transactions"| GW["pix-gateway-api ✅"]
-    GW -->|"same DB transaction"| DB[("Postgres")]
-    GW -.->|"outbox dispatcher polls"| MQ[["Redpanda 🔜 (Phase 2)"]]
-    MQ --> LW["pix-ledger-worker 🔜 (Phase 2)"]
-    LW --> DB
+    GW -->|"same DB transaction"| GWDB[("Postgres (gateway)")]
+    GW -.->|"outbox dispatcher publishes"| MQ[["Redpanda ✅"]]
+    MQ --> LW["pix-ledger-worker ✅"]
+    LW --> LWDB[("Postgres (ledger)")]
     GW -.->|"metrics"| OBS["Prometheus + Grafana 🔜 (Phase 3)"]
+    LW -.->|"metrics"| OBS
 ```
 
-Two services are planned. `pix-gateway-api` accepts a transaction, persists it, and writes an
-outbox event in the same database transaction. A `pix-ledger-worker` (Phase 2) will consume
-that event from Redpanda and post a double-entry ledger record. Splitting the flow this way is
-what makes the observability phase meaningful later — there's an actual asynchronous hop to
-instrument, not two services drawn on a whiteboard.
+Two services, each with its own database — no shared schema between them. `pix-gateway-api`
+accepts a transaction, persists it, and writes an outbox event in the same database transaction.
+`pix-ledger-worker` consumes that event from Redpanda and posts a double-entry ledger record.
+Splitting the flow this way is what makes the observability phase meaningful later — there's an
+actual asynchronous hop to instrument, not two services drawn on a whiteboard.
 
 ## Design decisions
 
@@ -68,9 +69,31 @@ is still sitting in the table, unpublished, ready to be retried.
 
 The dispatcher doesn't know or care what it's publishing to — it depends on a
 [`TransactionEventPublisher`](pix-gateway-api/src/main/java/com/pixgateway/application/port/TransactionEventPublisher.java)
-port. Today the only adapter is [`LoggingTransactionEventPublisher`](pix-gateway-api/src/main/java/com/pixgateway/infrastructure/outbox/LoggingTransactionEventPublisher.java),
-which just logs. Phase 2 adds a Redpanda-backed adapter behind the same interface — the
-dispatcher and the application layer won't change.
+port. The adapter behind it today is [`KafkaTransactionEventPublisher`](pix-gateway-api/src/main/java/com/pixgateway/infrastructure/outbox/KafkaTransactionEventPublisher.java),
+which publishes to Redpanda. Its `publish()` blocks on the producer's broker acknowledgment
+before returning — the port's contract requires that, since the dispatcher marks an event
+published as soon as `publish()` returns; a fire-and-forget send that silently failed would let
+a lost event be forgotten forever.
+
+### At-least-once delivery, idempotent consumption
+
+Kafka (and Redpanda) guarantee at-least-once delivery, not exactly-once: a consumer can see the
+same message more than once, most commonly after a rebalance. `pix-ledger-worker` treats this as
+the normal case rather than an edge case. A transaction always produces exactly one DEBIT and
+one CREDIT [`LedgerEntry`](pix-ledger-worker/src/main/java/com/pixledger/domain/LedgerEntry.java);
+the unique constraint on `(transaction_id, direction)` means a redelivered message collides on
+the debit insert, and — because both inserts happen inside one `TransactionTemplate` block in
+[`LedgerService`](pix-ledger-worker/src/main/java/com/pixledger/application/LedgerService.java) —
+the whole posting rolls back before the credit insert is ever attempted. The ledger never ends
+up with half of a pair. [`LedgerPostingIntegrationTest`](pix-ledger-worker/src/test/java/com/pixledger/LedgerPostingIntegrationTest.java)
+replays the same message twice against a real broker and asserts it's a no-op the second time.
+
+### Database per service
+
+`pix-gateway-api` and `pix-ledger-worker` each get their own Postgres instance — no shared
+schema, no shared connection pool. They're coupled only through the JSON contract on the
+`transactions.created` topic, not through any Java code or database table either service can
+reach into.
 
 ### Money as integer cents
 
@@ -79,27 +102,53 @@ rounding error.
 
 ## Tech stack
 
-Java 21, Spring Boot 4.1, Spring Data JPA, Flyway, PostgreSQL, Testcontainers, JUnit 5. Maven
-Wrapper is committed, so `./mvnw` works without installing Maven.
+Java 21, Spring Boot 4.1, Spring Data JPA, Flyway, PostgreSQL, Spring for Apache Kafka, Redpanda,
+Testcontainers, JUnit 5, Docker Compose. Maven Wrapper is committed in both services, so
+`./mvnw` works without installing Maven.
 
 ## Running it
 
 ### Tests
 
 ```bash
-cd pix-gateway-api
+cd pix-gateway-api    # or pix-ledger-worker
 ./mvnw test
 ```
 
-The integration test spins up a real Postgres via Testcontainers — no manual database setup —
-but it does need a Docker daemon running locally.
+Each service's integration tests spin up real Postgres and Kafka via Testcontainers — no manual
+setup — but they do need a Docker daemon running locally.
 
-### The full service
+### The full stack
 
-There's no `docker-compose.yml` yet; that arrives in Phase 2 alongside the second service, so
-that `docker-compose up` brings up the whole system in one shot instead of half of it. Until
-then, running `pix-gateway-api` standalone means pointing `application.yml` at a Postgres
-instance you provision yourself.
+```bash
+docker compose up -d --build
+```
+
+Brings up both Postgres instances, Redpanda, and both services. First run builds the two service
+images (multi-stage Maven build, so it downloads dependencies fresh — expect a few minutes);
+after that it's fast. Then:
+
+```bash
+curl -X POST http://localhost:8080/transactions \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -d '{"payerAccount":"alice@example.com","payeeAccount":"bob@example.com","amountCents":5000}'
+```
+
+returns `202` with the transaction, and within a couple of seconds the same transaction id shows
+up as a balanced pair in the ledger's database:
+
+```
+$ docker exec pix-payment-gateway-postgres-ledger-1 psql -U pixledger -d pixledger \
+    -c "SELECT transaction_id, account, direction, amount_cents FROM ledger_entries;"
+
+            transaction_id            |      account      | direction | amount_cents
+--------------------------------------+--------------------+-----------+--------------
+ 4584deaa-0ce7-495c-b1e0-1495ded01724 | alice@example.com  | DEBIT     |         5000
+ 4584deaa-0ce7-495c-b1e0-1495ded01724 | bob@example.com    | CREDIT    |         5000
+```
+
+That's a real run against the compose stack on 2026-08-16, not a hand-written example.
 
 ## API
 
@@ -133,16 +182,29 @@ Returns `202 Accepted`:
 Replaying the same `Idempotency-Key` returns the original transaction instead of creating a
 duplicate, whether the replay is sequential or concurrent with the original request.
 
+The `202` response only means the transaction was accepted and recorded — posting to the ledger
+happens asynchronously, a moment later, once `pix-ledger-worker` consumes the resulting event.
+
 ## Project structure
 
 ```
 pix-payment-gateway/
-└── pix-gateway-api/
-    └── src/main/java/com/pixgateway/
-        ├── domain/            Transaction, OutboxEvent, TransactionStatus
-        ├── application/       TransactionService, port/TransactionEventPublisher
+├── docker-compose.yml         2 Postgres instances + Redpanda + both services
+├── pix-gateway-api/
+│   ├── Dockerfile
+│   └── src/main/java/com/pixgateway/
+│       ├── domain/            Transaction, OutboxEvent, TransactionStatus
+│       ├── application/       TransactionService, port/TransactionEventPublisher
+│       └── infrastructure/
+│           ├── web/           TransactionController, GlobalExceptionHandler, DTOs
+│           ├── persistence/   Spring Data repositories
+│           └── outbox/        OutboxDispatcher, KafkaTransactionEventPublisher
+└── pix-ledger-worker/
+    ├── Dockerfile
+    └── src/main/java/com/pixledger/
+        ├── domain/            LedgerEntry, LedgerDirection
+        ├── application/       LedgerService, TransactionCreatedEvent
         └── infrastructure/
-            ├── web/           TransactionController, GlobalExceptionHandler, DTOs
-            ├── persistence/   Spring Data repositories
-            └── outbox/        OutboxDispatcher, LoggingTransactionEventPublisher
+            ├── persistence/   LedgerEntryRepository
+            └── kafka/         TransactionCreatedListener
 ```

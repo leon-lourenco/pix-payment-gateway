@@ -1,0 +1,84 @@
+services:
+  postgres-gateway:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pixgateway
+      POSTGRES_USER: pixgateway
+      POSTGRES_PASSWORD: pixgateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-gateway-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pixgateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  postgres-ledger:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pixledger
+      POSTGRES_USER: pixledger
+      POSTGRES_PASSWORD: pixledger
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-ledger-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pixledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Single internal listener only -- nothing on the host needs to talk to Redpanda directly.
+  # Poke at it with `docker compose exec redpanda rpk topic list` if you need to look inside.
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  pix-gateway-api:
+    build: ./pix-gateway-api
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-gateway:5432/pixgateway
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres-gateway:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+
+  pix-ledger-worker:
+    build: ./pix-ledger-worker
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-ledger:5432/pixledger
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres-ledger:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+
+volumes:
+  postgres-gateway-data:
+  postgres-ledger-data:
