@@ -8,7 +8,7 @@
 		<version>4.1.0</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>com.leongomes.pixgateway</groupId>
+	<groupId>com.pixgateway</groupId>
 	<artifactId>pix-gateway-api</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>pix-gateway-api</name>
