@@ -15,9 +15,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpEntity;
@@ -32,6 +34,7 @@ import org.springframework.http.ResponseEntity;
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureTestRestTemplate
 class TransactionIdempotencyIntegrationTest {
 
     @Autowired
@@ -42,6 +45,14 @@ class TransactionIdempotencyIntegrationTest {
 
     @Autowired
     private OutboxEventRepository outboxEventRepository;
+
+    // Spring caches and reuses the same application context (and Testcontainers Postgres)
+    // across every @Test method here, so row counts must be reset between tests.
+    @AfterEach
+    void cleanUpDatabase() {
+        outboxEventRepository.deleteAll();
+        transactionRepository.deleteAll();
+    }
 
     @Test
     void concurrentRequestsWithSameIdempotencyKeyCreateExactlyOneTransaction() throws Exception {
