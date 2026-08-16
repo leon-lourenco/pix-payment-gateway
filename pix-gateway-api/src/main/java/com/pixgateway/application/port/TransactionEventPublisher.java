@@ -5,8 +5,9 @@ import com.pixgateway.domain.OutboxEvent;
 /**
  * Outbound port for delivering domain events to whatever broker sits behind it.
  *
- * The application layer only depends on this interface. In this phase the only adapter is a
- * logging stand-in; a Kafka/Redpanda adapter will be plugged in later without any change here.
+ * {@code publish} must not return until the broker has confirmed delivery. The caller
+ * ({@code OutboxDispatcher}) marks the event published immediately afterward, so a publish that
+ * returns successfully without a real delivery guarantee would let a lost event be forgotten.
  */
 public interface TransactionEventPublisher {
 

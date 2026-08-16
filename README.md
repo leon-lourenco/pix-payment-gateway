@@ -111,8 +111,8 @@ Header: Idempotency-Key: <any client-generated unique string>
 Content-Type: application/json
 
 {
-  "payerAccount": "acc-payer",
-  "payeeAccount": "acc-payee",
+  "payerAccount": "alice@example.com",
+  "payeeAccount": "bob@example.com",
   "amountCents": 5000
 }
 ```
@@ -123,8 +123,8 @@ Returns `202 Accepted`:
 {
   "id": "5f2c1e2a-...",
   "status": "PENDING",
-  "payerAccount": "acc-payer",
-  "payeeAccount": "acc-payee",
+  "payerAccount": "alice@example.com",
+  "payeeAccount": "bob@example.com",
   "amountCents": 5000,
   "createdAt": "2026-08-15T19:04:11.123Z"
 }

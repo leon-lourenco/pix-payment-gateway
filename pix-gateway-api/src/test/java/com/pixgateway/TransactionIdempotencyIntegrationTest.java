@@ -26,15 +26,21 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.TestPropertySource;
 
 /**
  * Exercises the actual failure mode idempotency is meant to prevent: the same client request
  * retried while the first attempt is still in flight, not just a second call made after the
  * first has already committed.
+ *
+ * The outbox dispatcher is pushed out to effectively never fire here: it's covered separately
+ * by {@link OutboxDispatchIntegrationTest}, and left running at its default 1s interval it would
+ * race the {@code @AfterEach} cleanup below (dispatcher updates a row this test just deleted).
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
+@TestPropertySource(properties = "pix.outbox.poll-interval-ms=600000")
 class TransactionIdempotencyIntegrationTest {
 
     @Autowired
@@ -104,7 +110,7 @@ class TransactionIdempotencyIntegrationTest {
         headers.set("Idempotency-Key", idempotencyKey);
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<CreateTransactionRequest> request = new HttpEntity<>(
-                new CreateTransactionRequest("acc-payer", "acc-payee", 5_000L), headers);
+                new CreateTransactionRequest("alice@example.com", "bob@example.com", 5_000L), headers);
         return restTemplate.postForEntity("/transactions", request, TransactionResponse.class);
     }
 }

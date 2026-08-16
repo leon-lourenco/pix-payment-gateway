@@ -9,10 +9,18 @@ spring:
     hibernate:
       ddl-auto: validate # schema is owned by Flyway migrations, not Hibernate
     open-in-view: false # forces lazy loading to happen inside the service layer, not the view
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 pix:
   outbox:
     poll-interval-ms: 1000
+  kafka:
+    topic:
+      transaction-created: transactions.created
 
 management:
   endpoints:
