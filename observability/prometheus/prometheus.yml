@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: pix-gateway-api
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["pix-gateway-api:8080"]
+
+  - job_name: pix-ledger-worker
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["pix-ledger-worker:8080"]

@@ -79,6 +79,32 @@ services:
       redpanda:
         condition: service_healthy
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - pix-gateway-api
+      - pix-ledger-worker
+
+  grafana:
+    image: grafana/grafana:latest
+    # Anonymous admin access: this stack only ever binds to localhost, so a login screen would
+    # just be friction, not security.
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   postgres-gateway-data:
   postgres-ledger-data:
