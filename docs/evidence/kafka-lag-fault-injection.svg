@@ -1,8 +1,14 @@
 <svg viewBox="0 0 700 340" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
   <rect x="0" y="0" width="700" height="340" fill="#fcfcfb"/>
 
-  <text x="24" y="30" font-size="16" font-weight="600" fill="#0b0b0b">Kafka consumer lag during a real pix-ledger-worker outage</text>
-  <text x="24" y="50" font-size="12" fill="#52514e">kafka_consumergroup_lag_sum{consumergroup="pix-ledger-worker"} — real Prometheus data, 2026-08-17</text>
+  <text x="24" y="28" font-size="15" font-weight="600" fill="#0b0b0b">Kafka consumer lag during a real pix-ledger-worker outage</text>
+  <text x="24" y="46" font-size="11" fill="#52514e">kafka_consumergroup_lag_sum{consumergroup="pix-ledger-worker"} — real Prometheus data, 2026-08-17</text>
+
+  <!-- annotation labels, single line each, sitting clear above where the dashed lines start -->
+  <g font-size="11" fill="#52514e" text-anchor="middle">
+    <text x="253.7" y="65">worker stopped</text>
+    <text x="443.8" y="65">worker restarted</text>
+  </g>
 
   <!-- gridlines + y labels -->
   <g stroke="#e1e0d9" stroke-width="1">
@@ -18,7 +24,7 @@
     <text x="62" y="263.5">0</text>
   </g>
 
-  <!-- outage window wash -->
+  <!-- outage window wash, aligned to the plot's own top/bottom edges -->
   <rect x="253.7" y="76.7" width="190.1" height="183.3" fill="#2a78d6" opacity="0.08"/>
 
   <!-- baseline / axis -->
@@ -28,25 +34,19 @@
   <path d="M70,260 H392.2 V76.7 H513 V260 H650"
         fill="none" stroke="#2a78d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- event markers -->
+  <!-- event markers: start well below the annotation labels above, so nothing crosses them -->
   <g stroke="#52514e" stroke-width="1" stroke-dasharray="3,3">
-    <line x1="253.7" y1="40" x2="253.7" y2="260"/>
-    <line x1="443.8" y1="40" x2="443.8" y2="260"/>
-  </g>
-  <g font-size="11" fill="#52514e">
-    <text x="253.7" y="70" text-anchor="middle">docker compose stop</text>
-    <text x="253.7" y="83" text-anchor="middle">pix-ledger-worker</text>
-    <text x="443.8" y="70" text-anchor="middle">docker compose start</text>
-    <text x="443.8" y="83" text-anchor="middle">pix-ledger-worker</text>
+    <line x1="253.7" y1="70" x2="253.7" y2="260"/>
+    <line x1="443.8" y1="70" x2="443.8" y2="260"/>
   </g>
 
-  <!-- peak label -->
-  <text x="452" y="72" font-size="12" fill="#0b0b0b" font-weight="600">15 transactions queued, unconsumed</text>
+  <!-- peak label: to the right of the plateau's end, clear of both annotations and the line -->
+  <text x="522" y="95" font-size="12" fill="#0b0b0b" font-weight="600">15 unconsumed</text>
 
   <!-- x axis -->
   <g font-size="11" fill="#898781">
-    <text x="70" y="278">0s</text>
-    <text x="650" y="278" text-anchor="end">180s</text>
-    <text x="360" y="300" text-anchor="middle" fill="#52514e">elapsed time</text>
+    <text x="70" y="284">0s</text>
+    <text x="650" y="284" text-anchor="end">180s</text>
+    <text x="360" y="304" text-anchor="middle" fill="#52514e">elapsed time</text>
   </g>
 </svg>
