@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PIX Payment Gateway</title>
+<meta name="description" content="Engineering case study: a PIX-style payment gateway that stays correct when its own consumer dies mid-flight — idempotent intake, the outbox pattern, and a ledger that never ends up half-posted." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%230e8f86'/%3E%3Ctext x='50' y='68' font-size='58' font-family='Georgia,serif' fill='%23eef2e9' text-anchor='middle'%3E$%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #eef2e9;
+    --paper-raised: #f6f8f3;
+    --rule: #c7d6bf;
+    --rule-strong: #9db096;
+    --ink: #16241c;
+    --ink-secondary: #4b5c4f;
+    --ink-muted: #75847a;
+    --accent: #0e8f86;
+    --accent-ink: #eef2e9;
+    --warn: #a5660a;
+    --warn-bg: #f2e3c8;
+    --shadow: rgba(22, 36, 28, 0.08);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #10190f;
+      --paper-raised: #17221a;
+      --rule: #2a3a2c;
+      --rule-strong: #3c4f3e;
+      --ink: #e9efe4;
+      --ink-secondary: #a8b6a2;
+      --ink-muted: #7d8c7d;
+      --accent: #35d2c3;
+      --accent-ink: #0a1512;
+      --warn: #e2a83f;
+      --warn-bg: #33290f;
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10190f;
+    --paper-raised: #17221a;
+    --rule: #2a3a2c;
+    --rule-strong: #3c4f3e;
+    --ink: #e9efe4;
+    --ink-secondary: #a8b6a2;
+    --ink-muted: #7d8c7d;
+    --accent: #35d2c3;
+    --accent-ink: #0a1512;
+    --warn: #e2a83f;
+    --warn-bg: #33290f;
+    --shadow: rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  a { color: var(--accent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2.5px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  code, .mono, .num { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  .prose { max-width: 700px; }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    border-bottom: 1.5px solid var(--rule-strong);
+    padding: 22px 0;
+  }
+  .masthead .wrap { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand-mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 6px;
+    background: var(--accent); color: var(--accent-ink);
+    font-family: "Fraunces", serif; font-weight: 700; font-size: 16px;
+    flex-shrink: 0;
+  }
+  .brand-name { font-family: "IBM Plex Mono"; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-secondary); }
+  .masthead nav { display: flex; gap: 24px; font-family: "IBM Plex Mono"; font-size: 13px; }
+  .masthead nav a { color: var(--ink-secondary); text-decoration: none; }
+  .masthead nav a:hover { color: var(--accent); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 76px 0 64px; border-bottom: 1.5px solid var(--rule); }
+  .eyebrow {
+    font-family: "IBM Plex Mono"; font-size: 12.5px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 18px;
+  }
+  .hero h1 { font-size: clamp(34px, 5.4vw, 56px); max-width: 15ch; }
+  .hero .dek { max-width: 56ch; margin: 22px 0 0; color: var(--ink-secondary); font-size: 19px; }
+  .cta-row { display: flex; gap: 14px; margin-top: 34px; flex-wrap: wrap; }
+  .btn {
+    font-family: "IBM Plex Mono"; font-size: 13.5px; letter-spacing: 0.02em;
+    padding: 12px 20px; border-radius: 3px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+    border: 1.5px solid transparent; transition: transform 0.12s ease, background 0.12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--ink); color: var(--paper); }
+  .btn-secondary { border-color: var(--rule-strong); color: var(--ink); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- sections ---------- */
+  section { padding: 64px 0; border-bottom: 1.5px solid var(--rule); }
+  section:last-of-type { border-bottom: none; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin-bottom: 34px; flex-wrap: wrap; }
+  .section-head h2 { font-size: clamp(24px, 3.4vw, 32px); }
+  .section-tag { font-family: "IBM Plex Mono"; font-size: 12.5px; color: var(--ink-muted); letter-spacing: 0.04em; }
+
+  /* ---------- proof / chart ---------- */
+  .proof-intro { color: var(--ink-secondary); max-width: 62ch; margin: 0 0 36px; }
+  .chart-card {
+    background: var(--paper-raised); border: 1.5px solid var(--rule); border-radius: 6px;
+    padding: 28px 24px 18px; box-shadow: 0 6px 18px var(--shadow);
+  }
+  .chart-card svg { width: 100%; height: auto; display: block; }
+  .chart-caption { font-family: "IBM Plex Mono"; font-size: 12.5px; color: var(--ink-muted); margin-top: 10px; }
+
+  #lag-path { stroke-dasharray: 1400; stroke-dashoffset: 1400; }
+  #lag-path.draw { animation: draw 2.4s cubic-bezier(0.22, 0.61, 0.36, 1) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    #lag-path { stroke-dashoffset: 0; }
+  }
+
+  .evidence-table { width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 15px; }
+  .evidence-table th { text-align: left; font-family: "IBM Plex Mono"; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-muted); font-weight: 500; padding: 0 0 10px; border-bottom: 1.5px solid var(--rule-strong); }
+  .evidence-table td { padding: 14px 0; border-bottom: 1px solid var(--rule); }
+  .evidence-table td:last-child, .evidence-table th:last-child { text-align: right; font-family: "IBM Plex Mono"; }
+  .evidence-table tr:last-child td { border-bottom: none; }
+  .evidence-table .value { font-size: 17px; font-weight: 600; }
+
+  .cross-check {
+    margin-top: 26px; padding: 16px 18px; background: var(--warn-bg); border-left: 3px solid var(--warn);
+    border-radius: 0 4px 4px 0; font-size: 14.5px; color: var(--ink);
+  }
+  .cross-check .mono { color: var(--ink-secondary); }
+
+  /* ---------- architecture ---------- */
+  .diagram-wrap { overflow-x: auto; }
+  .diagram-wrap svg { min-width: 720px; width: 100%; height: auto; display: block; }
+  .arch-box { fill: var(--paper-raised); stroke: var(--rule-strong); stroke-width: 1.5; }
+  .arch-box.done { stroke: var(--accent); }
+  .arch-label { font-family: "IBM Plex Mono"; font-size: 13px; fill: var(--ink); }
+  .arch-sub { font-family: "IBM Plex Mono"; font-size: 10.5px; fill: var(--ink-muted); }
+  .arch-arrow { stroke: var(--ink-secondary); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .arch-arrow-dashed { stroke: var(--ink-muted); stroke-width: 1.3; stroke-dasharray: 3 3; fill: none; }
+  .arch-edge-label { font-family: "IBM Plex Mono"; font-size: 11px; fill: var(--ink-muted); }
+
+  /* ---------- decisions ---------- */
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2px; background: var(--rule); border: 1.5px solid var(--rule); border-radius: 6px; overflow: hidden; }
+  .decision { background: var(--paper-raised); padding: 26px 24px; }
+  .decision h3 { font-size: 18px; margin-bottom: 10px; }
+  .decision p { color: var(--ink-secondary); font-size: 14.5px; margin: 0 0 14px; }
+  .decision a { font-family: "IBM Plex Mono"; font-size: 12.5px; text-decoration: none; }
+  .decision a::after { content: " →"; }
+
+  /* ---------- stack ---------- */
+  .stack-list { display: flex; flex-wrap: wrap; gap: 10px; }
+  .stack-item {
+    font-family: "IBM Plex Mono"; font-size: 12.5px; padding: 7px 12px;
+    border: 1px solid var(--rule-strong); border-radius: 20px; color: var(--ink-secondary);
+  }
+
+  /* ---------- footer ---------- */
+  footer { padding: 48px 0 60px; }
+  footer .wrap { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  footer .sig { font-family: "Fraunces"; font-size: 20px; }
+  footer .meta { font-family: "IBM Plex Mono"; font-size: 12.5px; color: var(--ink-muted); margin-top: 6px; }
+  footer .links { display: flex; gap: 18px; font-family: "IBM Plex Mono"; font-size: 13px; }
+  footer a { color: var(--ink-secondary); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 640px) {
+    .hero { padding: 52px 0 44px; }
+    section { padding: 48px 0; }
+  }
+</style>
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="wrap">
+      <div class="brand">
+        <span class="brand-mark">$</span>
+        <span class="brand-name">pix-payment-gateway</span>
+      </div>
+      <nav>
+        <a href="#proof">The proof</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#decisions">Decisions</a>
+        <a href="https://github.com/leon-lourenco/pix-payment-gateway">Source</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Engineering case study</p>
+      <h1>Kill the consumer mid-flight.<br />The ledger still balances.</h1>
+      <p class="dek">A PIX-style payment gateway built to prove three things under real
+        failure, not just describe them: idempotent intake that survives a race, an outbox
+        that never loses an event, and a ledger that never ends up with half a transaction
+        posted. Everything on this page is a real run, not a mockup.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/leon-lourenco/pix-payment-gateway">View source on GitHub</a>
+        <a class="btn btn-secondary" href="https://github.com/leon-lourenco/pix-payment-gateway#readme">Read the README</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="proof">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>The proof</h2>
+        <span class="section-tag">kafka_consumergroup_lag_sum — 2026&#8209;08&#8209;17</span>
+      </div>
+      <p class="proof-intro">This isn't a diagram of what should happen. The
+        <code>pix-ledger-worker</code> consumer was actually stopped, 15 transactions were posted
+        against the running gateway, and the worker was started back up — while Prometheus
+        watched the broker's own view of consumer lag the whole time.</p>
+
+      <div class="chart-card">
+        <svg viewBox="0 0 900 380" role="img" aria-label="Line chart: Kafka consumer lag stays at 0, climbs to 15 while pix-ledger-worker is stopped, then drains back to 0 after it restarts">
+          <defs></defs>
+          <g stroke="var(--rule)" stroke-width="1">
+            <line x1="60" y1="100" x2="860" y2="100"></line>
+            <line x1="60" y1="166.7" x2="860" y2="166.7"></line>
+            <line x1="60" y1="233.3" x2="860" y2="233.3"></line>
+            <line x1="60" y1="300" x2="860" y2="300"></line>
+          </g>
+          <g font-family="IBM Plex Mono" font-size="12" fill="var(--ink-muted)" text-anchor="end">
+            <text x="50" y="104">15</text>
+            <text x="50" y="170.7">10</text>
+            <text x="50" y="237.3">5</text>
+            <text x="50" y="304">0</text>
+          </g>
+
+          <rect x="313.3" y="60" width="262.2" height="240" fill="var(--warn)" opacity="0.08"></rect>
+          <line x1="60" y1="300" x2="860" y2="300" stroke="var(--rule-strong)" stroke-width="1.5"></line>
+
+          <path id="lag-path" d="M60,300 H504.4 V100 H671 V300 H860"
+                fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+
+          <g stroke="var(--ink-muted)" stroke-width="1.3" stroke-dasharray="3,3">
+            <line x1="313.3" y1="40" x2="313.3" y2="300"></line>
+            <line x1="575.5" y1="40" x2="575.5" y2="300"></line>
+          </g>
+          <g font-family="IBM Plex Mono" font-size="12" fill="var(--ink-secondary)">
+            <text x="313.3" y="30" text-anchor="middle">worker stopped</text>
+            <text x="575.5" y="30" text-anchor="middle">worker restarted</text>
+          </g>
+          <text x="584" y="92" font-family="IBM Plex Mono" font-size="13" font-weight="600" fill="var(--ink)">15 records queued, unconsumed</text>
+
+          <g font-family="IBM Plex Mono" font-size="12" fill="var(--ink-muted)">
+            <text x="60" y="326">0s</text>
+            <text x="860" y="326" text-anchor="end">180s elapsed</text>
+          </g>
+        </svg>
+        <p class="chart-caption">Real data pulled from Prometheus's query_range API for this run — see it in the repo at <code>docs/evidence/</code>.</p>
+      </div>
+
+      <table class="evidence-table">
+        <thead><tr><th>Moment</th><th>kafka_consumergroup_lag_sum</th></tr></thead>
+        <tbody>
+          <tr><td>Baseline</td><td class="value">0</td></tr>
+          <tr><td><code>pix-ledger-worker</code> stopped, 15 transactions sent</td><td class="value">15</td></tr>
+          <tr><td>~20s after <code>pix-ledger-worker</code> restarted</td><td class="value">0</td></tr>
+        </tbody>
+      </table>
+
+      <p class="cross-check">Cross-checked independently against the ledger's own Postgres —
+        <code class="mono">SELECT COUNT(*) FROM ledger_entries</code> came back as exactly two
+        rows (one DEBIT, one CREDIT) per transaction once the worker caught up. No orphaned
+        half-postings from the outage.</p>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>How it works</h2>
+        <span class="section-tag">two services, two databases</span>
+      </div>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 900 260" role="img" aria-label="Architecture diagram: client posts to pix-gateway-api, which writes to its own Postgres and dispatches to Redpanda, which pix-ledger-worker consumes and writes to a separate Postgres">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-secondary)"></path>
+            </marker>
+          </defs>
+
+          <rect class="arch-box" x="20" y="88" width="110" height="50" rx="4"></rect>
+          <text class="arch-label" x="75" y="118" text-anchor="middle">client</text>
+
+          <rect class="arch-box done" x="190" y="88" width="170" height="50" rx="4"></rect>
+          <text class="arch-label" x="275" y="112" text-anchor="middle">pix-gateway-api</text>
+          <text class="arch-sub" x="275" y="128" text-anchor="middle">idempotent intake + outbox</text>
+
+          <rect class="arch-box" x="215" y="176" width="130" height="40" rx="4"></rect>
+          <text class="arch-label" x="280" y="200" text-anchor="middle">postgres</text>
+
+          <rect class="arch-box done" x="420" y="88" width="140" height="50" rx="4"></rect>
+          <text class="arch-label" x="490" y="118" text-anchor="middle">redpanda</text>
+
+          <rect class="arch-box done" x="620" y="88" width="170" height="50" rx="4"></rect>
+          <text class="arch-label" x="705" y="112" text-anchor="middle">pix-ledger-worker</text>
+          <text class="arch-sub" x="705" y="128" text-anchor="middle">idempotent posting</text>
+
+          <rect class="arch-box" x="645" y="176" width="130" height="40" rx="4"></rect>
+          <text class="arch-label" x="710" y="200" text-anchor="middle">postgres</text>
+
+          <path class="arch-arrow" d="M130,113 H190"></path>
+          <path class="arch-arrow" d="M360,113 H420"></path>
+          <path class="arch-arrow" d="M560,113 H620"></path>
+          <path class="arch-arrow-dashed" d="M280,138 V176"></path>
+          <path class="arch-arrow-dashed" d="M710,138 V176"></path>
+
+          <text class="arch-edge-label" x="390" y="102" text-anchor="middle">dispatch</text>
+          <text class="arch-edge-label" x="590" y="102" text-anchor="middle">consume</text>
+        </svg>
+      </div>
+      <p style="color:var(--ink-secondary); max-width:62ch; margin-top:24px;">No shared schema,
+        no shared connection pool. The two services are coupled only through the JSON contract
+        on the <code>transactions.created</code> topic — everything else about how each one
+        stores its own state is a private decision.</p>
+    </div>
+  </section>
+
+  <section id="decisions">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Three decisions, not defaults</h2>
+      </div>
+      <div class="decisions">
+        <div class="decision">
+          <h3>Idempotency by constraint</h3>
+          <p>A "check, then insert" has a race — two concurrent requests can both pass the
+            check first. The real guard is a <code>UNIQUE</code> constraint on
+            <code>idempotency_key</code>; the loser's insert fails and falls back to reading
+            the winner's row, in a separate transaction, since Postgres won't let you read
+            after a failed statement in the same one.</p>
+          <a href="https://github.com/leon-lourenco/pix-payment-gateway/blob/master/pix-gateway-api/src/main/java/com/pixgateway/application/TransactionService.java">TransactionService.java</a>
+        </div>
+        <div class="decision">
+          <h3>Outbox over dual-write</h3>
+          <p>Writing to Postgres and publishing to Kafka can't both happen atomically by
+            default. The event is written to a table in the same transaction as the business
+            row, then a poller dispatches it — so a crash mid-publish leaves a retryable row,
+            not a lost event.</p>
+          <a href="https://github.com/leon-lourenco/pix-payment-gateway/blob/master/pix-gateway-api/src/main/java/com/pixgateway/infrastructure/outbox/OutboxDispatcher.java">OutboxDispatcher.java</a>
+        </div>
+        <div class="decision">
+          <h3>At-least-once as the normal case</h3>
+          <p>Kafka redelivers. A transaction always produces one DEBIT and one CREDIT entry;
+            a unique constraint on <code>(transaction_id, direction)</code> means a redelivered
+            message collides and rolls back before the second insert — never half a pair.</p>
+          <a href="https://github.com/leon-lourenco/pix-payment-gateway/blob/master/pix-ledger-worker/src/main/java/com/pixledger/application/LedgerService.java">LedgerService.java</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Stack</h2>
+      </div>
+      <div class="stack-list">
+        <span class="stack-item">Java 21</span>
+        <span class="stack-item">Spring Boot 4.1</span>
+        <span class="stack-item">Spring Data JPA</span>
+        <span class="stack-item">Flyway</span>
+        <span class="stack-item">PostgreSQL</span>
+        <span class="stack-item">Spring for Apache Kafka</span>
+        <span class="stack-item">Redpanda</span>
+        <span class="stack-item">Testcontainers</span>
+        <span class="stack-item">JUnit 5</span>
+        <span class="stack-item">Docker Compose</span>
+        <span class="stack-item">Prometheus</span>
+        <span class="stack-item">Grafana</span>
+        <span class="stack-item">kafka-exporter</span>
+        <span class="stack-item">springdoc-openapi</span>
+        <span class="stack-item">k6</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div>
+        <p class="sig">Leonardo Lourenço Gomes</p>
+        <p class="meta">Senior backend engineer · runs entirely local via <code>docker compose up</code>, no hosted demo</p>
+      </div>
+      <div class="links">
+        <a href="https://github.com/leon-lourenco">GitHub</a>
+        <a href="https://www.linkedin.com/in/leonardo-lourenço-gomes">LinkedIn</a>
+        <a href="https://github.com/leon-lourenco/pix-payment-gateway">This repo</a>
+      </div>
+    </div>
+  </footer>
+
+<script>
+  (function () {
+    var path = document.getElementById('lag-path');
+    if (!path || !('IntersectionObserver' in window)) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          path.classList.add('draw');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.4 });
+    io.observe(path);
+  })();
+</script>
+
+</body>
+</html>
