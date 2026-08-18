@@ -12,10 +12,9 @@ a senior backend engineer, built in public in scoped phases.
 
 - [x] **Phase 1 — `pix-gateway-api`**: idempotent transaction intake, outbox pattern, Postgres, Testcontainers.
 - [x] **Phase 2 — `pix-ledger-worker`**: Redpanda (Kafka-API-compatible) consumer, double-entry ledger, full `docker-compose up`.
-- [ ] **Phase 3 — Observability**: OpenTelemetry/Prometheus/Grafana, a load test, and a fault-injection recording.
+- [x] **Phase 3 — Observability**: Prometheus + Grafana, Swagger/OpenAPI docs, a real fault-injection run.
 
-Phases 1 and 2 are implemented and running end-to-end. The sections below describe what exists
-today; the rest of this README will grow as Phase 3 lands.
+All three phases are implemented and running end-to-end.
 
 ## Architecture
 
@@ -26,8 +25,10 @@ flowchart LR
     GW -.->|"outbox dispatcher publishes"| MQ[["Redpanda ✅"]]
     MQ --> LW["pix-ledger-worker ✅"]
     LW --> LWDB[("Postgres (ledger)")]
-    GW -.->|"metrics"| OBS["Prometheus + Grafana 🔜 (Phase 3)"]
+    GW -.->|"metrics"| OBS["Prometheus + Grafana ✅"]
     LW -.->|"metrics"| OBS
+    RPD["kafka-exporter ✅"] -.->|"broker-side consumer lag"| OBS
+    MQ -.-> RPD
 ```
 
 Two services, each with its own database — no shared schema between them. `pix-gateway-api`
@@ -95,6 +96,20 @@ schema, no shared connection pool. They're coupled only through the JSON contrac
 `transactions.created` topic, not through any Java code or database table either service can
 reach into.
 
+### Consumer lag has to be measured broker-side, not client-side
+
+The obvious way to expose Kafka consumer lag is Micrometer's own
+`kafka_consumer_fetch_manager_records_lag`, auto-bound by Spring for Apache Kafka — and it
+works, right up until the point it doesn't: that metric is reported *by the consumer process
+itself*. Stop `pix-ledger-worker` to simulate an outage and the metric doesn't climb, it just
+stops updating, because there's no JVM left to report it. For a dashboard whose whole point is
+showing what happens *while the consumer is down*, that's useless.
+
+[`kafka-exporter`](https://github.com/danielqsj/kafka-exporter) fixes this by asking Redpanda
+directly — `log-end-offset - committed-offset` per consumer group, computed broker-side, so it
+keeps reporting real numbers whether `pix-ledger-worker` is up or not. The Grafana panel queries
+`kafka_consumergroup_lag_sum{consumergroup="pix-ledger-worker"}`, not the Micrometer one.
+
 ### Money as integer cents
 
 Amounts are stored as `long amountCents`, not a floating-point type, to keep the ledger free of
@@ -103,8 +118,9 @@ rounding error.
 ## Tech stack
 
 Java 21, Spring Boot 4.1, Spring Data JPA, Flyway, PostgreSQL, Spring for Apache Kafka, Redpanda,
-Testcontainers, JUnit 5, Docker Compose. Maven Wrapper is committed in both services, so
-`./mvnw` works without installing Maven.
+Testcontainers, JUnit 5, Docker Compose, Prometheus, Grafana, kafka-exporter, springdoc-openapi
+(Swagger UI), k6. Maven Wrapper is committed in both services, so `./mvnw` works without
+installing Maven.
 
 ## Running it
 
@@ -185,18 +201,75 @@ duplicate, whether the replay is sequential or concurrent with the original requ
 The `202` response only means the transaction was accepted and recorded — posting to the ledger
 happens asynchronously, a moment later, once `pix-ledger-worker` consumes the resulting event.
 
+Interactive Swagger UI (springdoc-openapi) is at `http://localhost:8080/swagger-ui.html` once
+the stack is up, with request/response schemas and examples documented on the endpoint —
+not the bare auto-generated defaults.
+
+## Observability
+
+Prometheus (`http://localhost:9090`) scrapes both services' `/actuator/prometheus` plus
+`kafka-exporter`; Grafana (`http://localhost:3000`, anonymous admin — this stack only ever binds
+to localhost) ships with a provisioned dashboard covering transaction throughput, p95 latency on
+`POST /transactions`, and `pix-ledger-worker`'s Kafka consumer lag.
+
+### A real fault-injection run
+
+To prove the lag panel actually means something, not just that it draws a line: with the stack
+already handling traffic, `pix-ledger-worker` was stopped, 15 transactions were posted against
+`pix-gateway-api` (which doesn't care whether anything is consuming from Redpanda — the outbox
+dispatcher publishes to Kafka regardless), and the worker was started back up.
+
+![Kafka consumer lag climbing to 15 while pix-ledger-worker is stopped, then draining back to 0 after it restarts](docs/evidence/kafka-lag-fault-injection.svg)
+
+| Moment | `kafka_consumergroup_lag_sum` |
+|---|---|
+| Baseline | 0 |
+| `pix-ledger-worker` stopped, 15 transactions sent | 15 |
+| ~20s after `pix-ledger-worker` restarted | 0 |
+
+Real numbers pulled straight from Prometheus's `query_range` API for that run, not hand-drawn —
+and the ledger backs it up independently: `SELECT COUNT(*) FROM ledger_entries` showed exactly 2
+rows (one DEBIT, one CREDIT) per transaction once the worker caught up, no orphaned half-postings
+from the outage.
+
+Reproduce it yourself:
+
+```bash
+docker compose stop pix-ledger-worker
+# send some transactions (see the curl example above), then
+docker compose start pix-ledger-worker
+# watch it drain:
+curl 'http://localhost:9090/api/v1/query?query=kafka_consumergroup_lag_sum{consumergroup="pix-ledger-worker"}'
+```
+
+### Load test
+
+[`load-test/create-transaction.js`](load-test/create-transaction.js) is a k6 script (20 req/s,
+2 minutes) against `POST /transactions`:
+
+```bash
+docker run --rm --network pix-payment-gateway_default \
+  -v "$PWD/load-test:/scripts" grafana/k6 run /scripts/create-transaction.js \
+  --env BASE_URL=http://pix-gateway-api:8080
+```
+
 ## Project structure
 
 ```
 pix-payment-gateway/
-├── docker-compose.yml         2 Postgres instances + Redpanda + both services
+├── docker-compose.yml         2 Postgres + Redpanda + kafka-exporter + Prometheus + Grafana + both services
+├── observability/
+│   ├── prometheus/            scrape config
+│   └── grafana/provisioning/  datasource + dashboard (JSON) provisioning
+├── load-test/                 k6 script
+├── docs/evidence/              fault-injection chart used above
 ├── pix-gateway-api/
 │   ├── Dockerfile
 │   └── src/main/java/com/pixgateway/
 │       ├── domain/            Transaction, OutboxEvent, TransactionStatus
 │       ├── application/       TransactionService, port/TransactionEventPublisher
 │       └── infrastructure/
-│           ├── web/           TransactionController, GlobalExceptionHandler, DTOs
+│           ├── web/           TransactionController, OpenApiConfig, GlobalExceptionHandler, DTOs
 │           ├── persistence/   Spring Data repositories
 │           └── outbox/        OutboxDispatcher, KafkaTransactionEventPublisher
 └── pix-ledger-worker/

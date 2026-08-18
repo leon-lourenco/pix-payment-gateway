@@ -79,6 +79,16 @@ services:
       redpanda:
         condition: service_healthy
 
+  # Broker-side view of consumer lag: unlike Micrometer's client-reported lag metric, this
+  # keeps working even when pix-ledger-worker itself is down -- which is the whole point when
+  # the fault-injection scenario is "stop the consumer and watch the backlog grow".
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    command: ["--kafka.server=redpanda:9092"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -88,6 +98,7 @@ services:
     depends_on:
       - pix-gateway-api
       - pix-ledger-worker
+      - kafka-exporter
 
   grafana:
     image: grafana/grafana:latest
@@ -99,7 +110,6 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
     ports:
       - "3000:3000"
     depends_on:
