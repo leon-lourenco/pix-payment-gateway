@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Two independent Maven projects, so each gets its own entry.
+  - package-ecosystem: "maven"
+    directory: "/pix-gateway-api"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "maven"
+    directory: "/pix-ledger-worker"
+    schedule:
+      interval: "weekly"
+
+  # Keeps the base images in each service's Dockerfile current.
+  - package-ecosystem: "docker"
+    directory: "/pix-gateway-api"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/pix-ledger-worker"
+    schedule:
+      interval: "weekly"
+
+  # Keeps the actions this repo's own workflow pins current. The reusable workflows living in
+  # ci-templates have their own Dependabot config over there - this only covers what's pinned
+  # directly in this repo's own workflow file.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

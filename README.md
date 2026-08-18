@@ -1,5 +1,9 @@
 # PIX Payment Gateway
 
+[![CI](https://github.com/leon-lourenco/pix-payment-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/leon-lourenco/pix-payment-gateway/actions/workflows/ci.yml)
+
+**Case study:** [leon-lourenco.github.io/pix-payment-gateway](https://leon-lourenco.github.io/pix-payment-gateway/) — the fault-injection run, the architecture, and the three design decisions in a two-minute read.
+
 A PIX-style instant payment gateway, built to demonstrate patterns used in real payment
 platforms — idempotency, the outbox pattern, distributed consistency, and observability —
 without relying on any proprietary client code. Everything here runs locally; there is no

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# A new push to the same branch cancels whatever CI run is already in flight for it - no point
+# burning minutes finishing a build for a commit that's already been superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pages: write
+  id-token: write
+
+jobs:
+  # pix-gateway-api and pix-ledger-worker are two independent Maven projects (no aggregator
+  # pom.xml), so the reusable workflow runs once per project rather than once for the repo.
+  build-test-gateway:
+    uses: leon-lourenco/ci-templates/.github/workflows/maven-build-test.yml@master
+    with:
+      working-directory: pix-gateway-api
+
+  build-test-ledger:
+    uses: leon-lourenco/ci-templates/.github/workflows/maven-build-test.yml@master
+    with:
+      working-directory: pix-ledger-worker
+
+  codeql:
+    uses: leon-lourenco/ci-templates/.github/workflows/codeql-java.yml@master
+    with:
+      build-tool: maven
+
+  # Publishes docs/index.html whenever master itself is what ran (a real push, or a manual
+  # re-run) - never on a pull request, since a PR's ref isn't refs/heads/master and a PR from a
+  # fork couldn't deploy anyway.
+  pages:
+    needs: [build-test-gateway, build-test-ledger]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    uses: leon-lourenco/ci-templates/.github/workflows/pages-static.yml@master
+    with:
+      docs-path: docs
